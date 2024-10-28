@@ -1,39 +1,62 @@
 import express from 'express';
 import * as dotenv from 'dotenv';
-import { Configuration, OpenAIApi} from 'openai';
+import fetch from 'node-fetch';
 
 dotenv.config();
 
 const router = express.Router();
 
-const config = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-const openai = new OpenAIApi(config);
-
 router.route('/').get((req, res) => {
-  res.status(200).json({ message: "Hello from DALL.E ROUTES" })
-})
+  res.status(200).json({ message: "Hello from DALL.E ROUTES" });
+});
 
 router.route('/').post(async (req, res) => {
   try {
     const { prompt } = req.body;
 
-    const response = await openai.createImage({
-      prompt,
-      n: 1,
-      size: '1024x1024',
-      response_format: 'b64_json'
+    if (!prompt) {
+      return res.status(400).json({ message: "Prompt is required" });
+    }
+
+    // Make request to Hugging Face Inference API
+    const response = await fetch('https://api-inference.huggingface.co/models/fady17/flux', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ inputs: prompt })
     });
 
-    const image = response.data.data[0].b64_json;
+    if (!response.ok) {
+      throw new Error('Failed to generate image');
+    }
 
-    res.status(200).json({ photo: image });
+    const data = await response.json();
+
+    // Assuming the output is a URL to the image
+    if (!data || !data.generated_image) {
+      throw new Error('No image generated');
+    }
+
+    const imageUrl = data.generated_image;
+    const imageResponse = await fetch(imageUrl);
+
+    if (!imageResponse.ok) {
+      throw new Error('Failed to fetch generated image');
+    }
+
+    const arrayBuffer = await imageResponse.arrayBuffer();
+    const base64Image = Buffer.from(arrayBuffer).toString('base64');
+
+    res.status(200).json({ photo: base64Image });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Something went wrong" })
+    console.error('Error:', error);
+    res.status(500).json({
+      message: "Something went wrong",
+      error: process.env.NODE_ENV === 'development' ? error.toString() : undefined
+    });
   }
-})
+});
 
 export default router;
